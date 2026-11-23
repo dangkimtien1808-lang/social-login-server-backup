@@ -1,0 +1,36 @@
+# Social Login Test Runner dashboard 的 systemd service
+# 安裝：
+#   sudo cp deploy/social-login.service /etc/systemd/system/social-login.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now social-login
+
+[Unit]
+Description=Social Login Test Runner (FastAPI + scheduler)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=c113118246
+Group=c113118246
+WorkingDirectory=/home/c113118246/social-login-test/social-login-test
+
+# 只監聽 127.0.0.1，外部經由 nginx 存取。請勿加上 --workers / --reload。
+ExecStart=/home/c113118246/social-login-test/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --proxy-headers
+
+Environment=JOB_TIMEOUT_MINUTES=30
+Environment=PYTHONUNBUFFERED=1
+# Playwright 會在 ~/.cache/ms-playwright 中尋找瀏覽器
+Environment=HOME=/home/c113118246
+
+Restart=on-failure
+RestartSec=5
+
+# 停止/重啟 service 時：kill 所有子行程（包含瀏覽器），不留下孤兒行程
+KillMode=control-group
+TimeoutStopSec=30
+
+# 限制此 service 的行程/執行緒數量（瀏覽器會使用大量執行緒）
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target
