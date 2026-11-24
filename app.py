@@ -665,10 +665,10 @@ DASHBOARD_HTML = r"""<!doctype html>
         <span>Dashboard</span>
       </div>
 
-      <div class="nav-item">
+      <a class="nav-item" href="/accounts-manager" style="text-decoration:none">
         <span class="nav-icon">👤</span>
         <span>Accounts</span>
-      </div>
+      </a>
 
       <div class="nav-item">
         <span class="nav-icon">⚙️</span>
@@ -832,3 +832,340 @@ DASHBOARD_HTML = r"""<!doctype html>
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     return DASHBOARD_HTML
+
+
+# ============================================================
+# Accounts Manager 區塊（唯讀）
+# 僅新增，不影響既有 endpoint。此區塊不寫入任何檔案，
+# 也絕不回傳 password / cookie / token / _CRED 的值。
+# ============================================================
+
+import re as _am_re
+from datetime import datetime as _am_datetime, timezone as _am_timezone
+from fastapi.responses import JSONResponse as _AmJSONResponse
+from accounts import ENV_PREFIX as _AM_ENV_PREFIX
+
+_AM_MAX_RESULT_FILES = 500
+_AM_ERROR_MAX_LEN = 160
+
+
+def _am_mask_login(value, secrets):
+    # 回傳 (email_masked, uid_masked)。只有格式明確是 email / uid 時才顯示頭尾，
+    # 其他格式（可能是誤填的 cookie / 密碼）一律完全遮蔽。
+    if not value:
+        return None, None
+    value = value.strip()
+    if value in secrets:
+        return None, "***"
+    if _am_re.fullmatch(r"[^@\s|;=]+@[^@\s|;=]+\.[^@\s|;=]+", value):
+        local, domain = value.split("@", 1)
+        return local[:2 if len(local) > 4 else 1] + "***@" + domain, None
+    if _am_re.fullmatch(r"\+?\d{8,20}", value):
+        return None, value[:3] + "***" + value[-3:]
+    return None, "***"
+
+
+def _am_error_summary(failed_step, error, secrets):
+    text = ": ".join(str(x) for x in (failed_step, error) if x)
+    if not text:
+        return None
+    # 先遮蔽再截斷，避免只剩一部分的機密值逃過比對
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = text.replace(secret, "***")
+    text = _am_re.sub(r"(https?://[^/\s?#]+)[^\s]*", r"\1/...", text)
+    text = _am_re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "***", text)
+    text = _am_re.sub(r"(?<![\w:/.])/(?:home|tmp|root|usr|opt|var)/\S+", "[path]", text)
+    text = " ".join(text.split())
+    return text[:_AM_ERROR_MAX_LEN] + ("..." if len(text) > _AM_ERROR_MAX_LEN else "")
+
+
+def _am_iso(ts):
+    return _am_datetime.fromtimestamp(ts, _am_timezone.utc).isoformat(timespec="seconds")
+
+
+def _am_last_results():
+    # 每個帳號最近一次的 job：結果檔 (job_results) 與記憶體中的 jobs 取較新者。
+    latest = {}
+
+    def consider(platform, account, ts, status, failed_step, error, active=False):
+        key = (platform, account)
+        old = latest.get(key)
+        if old is None or (active, ts) > (old["active"], old["ts"]):
+            latest[key] = {"ts": ts, "status": status, "failed_step": failed_step,
+                           "error": error, "active": active}
+
+    files = []
+    try:
+        for f in RESULTS_DIR.glob("*.json"):
+            try:
+                files.append((f.stat().st_mtime, f))
+            except OSError:
+                continue
+    except OSError:
+        pass
+    files.sort(key=lambda x: x[0], reverse=True)
+
+    for mtime, f in files[:_AM_MAX_RESULT_FILES]:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            consider(data.get("platform"), data.get("account"), mtime,
+                     "success" if data.get("ok") is True else "failed",
+                     data.get("failed_step"), data.get("error"))
+        except (OSError, ValueError, AttributeError):
+            continue
+
+    with jobs_lock:
+        snapshot = [dict(j, logs=None) for j in jobs.values()]
+    for j in snapshot:
+        status = str(j.get("status", "")).lower()
+        consider(j.get("platform"), j.get("account"),
+                 j.get("finished_at") or j.get("created_at") or 0,
+                 status, j.get("failed_step"), j.get("error"),
+                 active=status in ACTIVE_STATUSES)
+    return latest
+
+
+def _am_path_info(raw):
+    # 只檢查是否存在，不讀取內容。專案目錄外的路徑不顯示完整位置。
+    path = Path(raw)
+    full = path if path.is_absolute() else BASE_DIR / path
+    try:
+        display = full.resolve().relative_to(BASE_DIR).as_posix()
+    except ValueError:
+        display = "(outside project)"
+    return full, display
+
+
+@app.get("/accounts/manage")
+def accounts_manage():
+    dashboard_status = {(a["platform"], a["name"]): a["status"] for a in accounts()}
+    last_results = _am_last_results()
+    rows, errors = [], []
+
+    for platform in ["tiktok", "facebook"]:
+        try:
+            loaded = load_accounts(platform)
+            with open(BASE_DIR / "accounts.json", encoding="utf-8-sig") as f:
+                entries = {e["name"]: e for e in json.load(f).get(platform, [])}
+        except Exception as e:
+            # 只回傳例外類型，避免訊息夾帶檔案內容
+            errors.append({"platform": platform, "error": type(e).__name__})
+            continue
+
+        names = [a["name"] for a in loaded]
+
+        for acc in loaded:
+            name = acc["name"]
+            prefix = entries.get(name, {}).get(
+                "env_prefix", f"{_AM_ENV_PREFIX[platform]}_{name.upper()}")
+            cred = os.getenv(f"{prefix}_CRED") or ""
+
+            secrets = {s for s in [acc["password"], acc["token"], cred,
+                                   os.getenv(f"{prefix}_COOKIE")] if s}
+            secrets.update(c["value"] for c in acc["cookies"])
+            email_masked, uid_masked = _am_mask_login(acc["email"], secrets)
+            # 錯誤訊息另外遮蔽 email/uid 與 CRED 的每一段；
+            # 太短的值 (如 cookie 的 "1") 不比對，以免訊息變得無法閱讀
+            redact = secrets | {s.strip() for s in cred.split("|")} | {acc["email"] or ""}
+            redact = {s for s in redact if len(s) >= 4}
+
+            profile, profile_display = _am_path_info(acc["profile_dir"])
+            session, session_display = _am_path_info(acc["session_file"])
+            profile_exists, session_exists = profile.is_dir(), session.is_file()
+
+            groups = [label for label, group in
+                      (("GROUP_9AM", GROUP_9AM), ("GROUP_13PM", GROUP_13PM))
+                      if (platform, name) in group]
+            last = last_results.get((platform, name))
+
+            warnings = []
+            if not acc["cookies"] and not (acc["email"] and acc["password"]):
+                warnings.append("No cookie and no complete email/password.")
+            if not profile_exists:
+                warnings.append("Profile directory does not exist.")
+            if not session_exists:
+                warnings.append("Session file does not exist.")
+            if names.count(name) > 1:
+                warnings.append("Duplicate account name.")
+            if last and last["status"] == "failed":
+                warnings.append("Last job failed.")
+
+            rows.append({
+                "platform": platform,
+                "name": name,
+                "status_current_dashboard": dashboard_status.get((platform, name)),
+                "email_masked": email_masked,
+                "uid_masked": uid_masked,
+                "has_email": bool(acc["email"]),
+                "has_password": bool(acc["password"]),
+                "has_cookie": bool(acc["cookies"]),
+                "has_token": bool(acc["token"]),
+                "has_cred": bool(cred),
+                "profile_dir_exists": profile_exists,
+                "session_file_exists": session_exists,
+                "profile_dir_display": profile_display,
+                "session_file_display": session_display,
+                "last_job_status": last["status"] if last else None,
+                "last_job_time": _am_iso(last["ts"]) if last else None,
+                "last_job_error_summary": (
+                    _am_error_summary(last["failed_step"], last["error"], redact)
+                    if last else None),
+                "schedule_group": ",".join(groups) or None,
+                "warnings": warnings,
+            })
+
+    return _AmJSONResponse(
+        {"read_only": True, "accounts": rows, "errors": errors},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts Manager</title>
+
+<link rel="stylesheet" href="/static/dashboard.css?v=1">
+<link rel="stylesheet" href="/static/accounts-manager.css?v=1">
+</head>
+
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <span>Automation Dashboard</span>
+      </div>
+    </div>
+
+    <div class="nav-block">
+      <div class="nav-label">Menu</div>
+
+      <a class="nav-item" href="/dashboard">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </a>
+
+      <a class="nav-item active" href="/accounts-manager" aria-current="page">
+        <span class="nav-icon">👤</span>
+        <span>Accounts</span>
+      </a>
+
+      <a class="nav-item" href="/dashboard#jobs">
+        <span class="nav-icon">⚙️</span>
+        <span>Jobs</span>
+      </a>
+
+      <a class="nav-item" href="/dashboard#logs">
+        <span class="nav-icon">🧾</span>
+        <span>Logs</span>
+      </a>
+    </div>
+
+    <div class="side-footer">
+      <span id="apiBadge" class="badge b-gray">API: checking...</span>
+      <span class="small">FastAPI backend monitor</span>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="mobile-brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <a href="/dashboard">← Dashboard</a>
+      </div>
+    </div>
+
+    <section class="topbar">
+      <div class="page-title">
+        <h1>Accounts Manager</h1>
+        <p>查看所有帳號的設定狀態與最近一次 job 結果。</p>
+      </div>
+
+      <div class="top-actions">
+        <select id="platformFilter" aria-label="Platform filter">
+          <option value="">All platforms</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+        </select>
+        <button id="refreshBtn" class="ghost" type="button">↻ Refresh</button>
+        <button id="addBtn" type="button">+ Add Account</button>
+      </div>
+    </section>
+
+    <div class="am-note">🔒 Read-only mode. Credentials are hidden.</div>
+    <div id="notice" role="status"></div>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <div class="card-title-icon">👤</div>
+          <div>
+            <h2>Accounts</h2>
+            <div id="amCount" class="card-subtitle">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-body am-table-wrap">
+        <table class="am-table">
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th>Status</th>
+              <th>Email / UID</th>
+              <th>Credentials</th>
+              <th>Profile / Session</th>
+              <th>Last job</th>
+              <th>Schedule</th>
+              <th>Warnings</th>
+            </tr>
+          </thead>
+          <tbody id="amRows">
+            <tr><td colspan="8">正在載入帳號清單...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<dialog id="addDialog" class="am-dialog" aria-labelledby="addTitle">
+  <h2 id="addTitle">Add Account</h2>
+  <p class="am-dialog-note">Add account will be enabled in the next step.</p>
+
+  <label>Platform
+    <select id="addPlatform">
+      <option value="tiktok">TikTok</option>
+      <option value="facebook">Facebook</option>
+    </select>
+  </label>
+  <label>Account name <input id="addName" type="text" autocomplete="off"></label>
+  <label>Email/UID <input id="addEmail" type="text" autocomplete="off"></label>
+  <label>Password <input id="addPassword" type="password" autocomplete="new-password"></label>
+  <label>Cookie <textarea id="addCookie" rows="3" autocomplete="off" spellcheck="false"></textarea></label>
+  <label>Token <input id="addToken" type="password" autocomplete="new-password"></label>
+
+  <div class="am-dialog-actions">
+    <button id="addCancel" class="ghost" type="button">Cancel</button>
+    <button id="addSave" type="button" disabled
+            title="Add account will be enabled in the next step.">Save</button>
+  </div>
+</dialog>
+
+<script src="/static/accounts-manager.js?v=1"></script>
+</body>
+</html>"""
+
+
+@app.get("/accounts-manager", response_class=HTMLResponse)
+def accounts_manager():
+    return ACCOUNTS_MANAGER_HTML

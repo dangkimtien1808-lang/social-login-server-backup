@@ -1,0 +1,146 @@
+/* Accounts Manager：僅補充 dashboard.css 沒有的樣式 */
+a.nav-item{
+  text-decoration:none;
+}
+
+.am-note{
+  padding:11px 15px;
+  margin-bottom:12px;
+  border:1px solid var(--border-soft);
+  border-radius:var(--radius-sm);
+  color:#70570d;
+  background:var(--panel-yellow);
+  font-size:13px;
+  font-weight:700;
+}
+
+.top-actions select,
+.am-dialog input,
+.am-dialog select,
+.am-dialog textarea{
+  min-height:37px;
+  padding:8px 12px;
+  border:1px solid #eed68e;
+  border-radius:13px;
+  color:var(--text);
+  background:#ffffff;
+}
+
+.am-table-wrap{
+  overflow-x:auto;
+}
+
+.am-table{
+  width:100%;
+  min-width:1150px;
+  border-collapse:collapse;
+  font-size:13px;
+}
+
+.am-table th{
+  padding:8px 10px;
+  color:var(--muted);
+  font-size:11px;
+  text-align:left;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  white-space:nowrap;
+}
+
+.am-table td{
+  padding:11px 10px;
+  border-top:1px solid var(--border-soft);
+  vertical-align:top;
+}
+
+.am-table td > div + div{
+  margin-top:4px;
+}
+
+.am-chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:5px;
+  max-width:190px;
+}
+
+.am-chip{
+  padding:1px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:700;
+  white-space:nowrap;
+}
+
+.am-chip.yes{
+  color:var(--green);
+  background:var(--green-bg);
+}
+
+.am-chip.no{
+  color:var(--gray);
+  background:var(--gray-bg);
+}
+
+.am-error{
+  min-width:210px;
+  max-width:230px;
+  color:var(--red);
+  font-size:12px;
+  overflow-wrap:anywhere;
+}
+
+.am-warn{
+  max-width:200px;
+  color:#a66a00;
+  font-size:12px;
+}
+
+.am-dialog{
+  width:min(480px, calc(100vw - 32px));
+  max-height:calc(100vh - 32px);
+  padding:22px;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);
+  background:var(--panel);
+  box-shadow:var(--shadow);
+}
+
+.am-dialog::backdrop{
+  background:rgba(47,37,8,.45);
+}
+
+.am-dialog h2{
+  margin:0;
+  font-size:19px;
+}
+
+.am-dialog-note{
+  margin:6px 0 14px;
+  color:#a66a00;
+  font-size:13px;
+  font-weight:700;
+}
+
+.am-dialog label{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  margin-bottom:11px;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.am-dialog-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  margin-top:16px;
+}
+
+.am-dialog-actions button{
+  width:auto;
+}
