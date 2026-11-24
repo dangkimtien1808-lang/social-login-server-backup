@@ -1,4 +1,4 @@
-// Accounts Manager（唯讀）：只呼叫 GET，不儲存任何資料。
+// Accounts Manager：查看帳號，並可新增帳號 (POST /accounts/manage)。
 (function(){
   'use strict';
 
@@ -130,12 +130,45 @@
     for (const id of ['addName', 'addEmail', 'addPassword', 'addCookie', 'addToken']){
       $(id).value = '';
     }
+    $('addMessage').textContent = '';
+  }
+
+  async function saveAccount(){
+    $('addSave').disabled = true;
+    $('addMessage').textContent = '';
+
+    try {
+      const res = await fetch('/accounts/manage', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          platform: $('addPlatform').value,
+          name: $('addName').value.trim(),
+          email: $('addEmail').value,
+          password: $('addPassword').value,
+          cookie: $('addCookie').value,
+          token: $('addToken').value
+        })
+      });
+      const data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || !data.ok) throw new Error(data.message || ('HTTP ' + res.status));
+
+      $('addDialog').close();
+      clearForm();
+      await load();
+      notice('已新增帳號 ' + data.platform + '/' + data.name, 'ok');
+    } catch (e) {
+      $('addMessage').textContent = e.message;
+    } finally {
+      $('addSave').disabled = false;
+    }
   }
 
   $('refreshBtn').addEventListener('click', load);
   $('platformFilter').addEventListener('change', render);
   $('addBtn').addEventListener('click', function(){ $('addDialog').showModal(); });
   $('addCancel').addEventListener('click', function(){ $('addDialog').close(); });
+  $('addSave').addEventListener('click', saveAccount);
   // 關閉（含 Esc）時清空輸入內容
   $('addDialog').addEventListener('close', clearForm);
 

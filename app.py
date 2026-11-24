@@ -835,12 +835,18 @@ def dashboard():
 
 
 # ============================================================
-# Accounts Manager 區塊（唯讀）
-# 僅新增，不影響既有 endpoint。此區塊不寫入任何檔案，
-# 也絕不回傳 password / cookie / token / _CRED 的值。
+# Accounts Manager 區塊
+# 僅新增，不影響既有 endpoint。唯一的寫入是 POST /accounts/manage
+# （只在 accounts.json 與 .env 追加新帳號，不修改既有內容）。絕不回傳 password / cookie / token / _CRED 的值。
 # ============================================================
 
 import re as _am_re
+import shutil as _am_shutil
+import tempfile as _am_tempfile
+from urllib.parse import urlsplit as _am_urlsplit
+from typing import Any as _AmAny
+from dotenv import dotenv_values as _am_dotenv_values
+from fastapi import Body as _AmBody, Request as _AmRequest
 from datetime import datetime as _am_datetime, timezone as _am_timezone
 from fastapi.responses import JSONResponse as _AmJSONResponse
 from accounts import ENV_PREFIX as _AM_ENV_PREFIX
@@ -1020,6 +1026,162 @@ def accounts_manage():
     )
 
 
+# 新增帳號：credential 追加到 .env，名稱追加到 accounts.json。
+
+_AM_ADD_LOCK = threading.Lock()
+_AM_ENV_FILE = BASE_DIR / ".env"
+_AM_ACCOUNTS_FILE = BASE_DIR / "accounts.json"
+_AM_FIELD_MAX = {"email": 254, "password": 256, "cookie": 16384, "token": 2048}
+
+
+class _AmReject(Exception):
+    # 訊息會回傳給 UI，不可包含使用者輸入的 credential
+    def __init__(self, status_code, message):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+def _am_write_tmp(data):
+    # 暫存檔權限為 600，名稱 .env.am-* 已被 .gitignore 的 .env.* 涵蓋
+    fd, tmp = _am_tempfile.mkstemp(prefix=".env.am-", dir=str(BASE_DIR))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    return tmp
+
+
+def _am_backup(target):
+    # 保留最近一次寫入前的內容：<檔名>.am.bak（權限 600，*.bak 已被 git ignore）
+    tmp = _am_write_tmp(target.read_bytes())
+    os.replace(tmp, str(target) + ".am.bak")
+
+
+def _am_replace(target, tmp):
+    # 沿用原檔權限，並以原子方式替換
+    _am_shutil.copymode(target, tmp)
+    os.replace(tmp, target)
+
+
+def _am_validate_new(payload):
+    if not isinstance(payload, dict):
+        raise _AmReject(400, "Invalid request.")
+
+    platform, name = payload.get("platform"), payload.get("name")
+    if platform not in ("tiktok", "facebook"):
+        raise _AmReject(400, "Platform must be tiktok or facebook.")
+    if not isinstance(name, str) or not _am_re.fullmatch(r"[a-z0-9_]{1,32}", name):
+        raise _AmReject(400, "Account name: 1-32 characters, only a-z, 0-9 and _.")
+
+    fields = {}
+    for key, max_len in _AM_FIELD_MAX.items():
+        value = payload.get(key) or ""
+        if not isinstance(value, str):
+            raise _AmReject(400, f"Invalid {key}.")
+        if key != "password":
+            value = value.strip()
+        if len(value) > max_len:
+            raise _AmReject(400, f"{key} is too long.")
+        if not value.isprintable():
+            raise _AmReject(400, f"{key} must be one line without control characters.")
+        fields[key] = value
+
+    if fields["cookie"] and not _am_re.search(r"(^|;)\s*[^=;\s]+=[^;\s]", fields["cookie"]):
+        raise _AmReject(400, "Cookie must look like name=value; name2=value2.")
+    if not fields["cookie"] and not (fields["email"] and fields["password"]):
+        raise _AmReject(400, "Enter a cookie, or both email/UID and password.")
+    # accounts.py 只能從 _CRED 讀取 EAA... 格式的 token
+    if fields["token"] and not _am_re.fullmatch(r"EAA[A-Za-z0-9]+", fields["token"]):
+        raise _AmReject(400, "Unsupported token format (must start with EAA). Leave it empty.")
+    return platform, name, fields
+
+
+def _am_add_account(platform, name, fields):
+    prefix = f"{_AM_ENV_PREFIX[platform]}_{name.upper()}"
+    new_env = {f"{prefix}_{key.upper()}": fields[key]
+               for key in ("email", "password", "cookie") if fields[key]}
+    if fields["token"]:
+        new_env[f"{prefix}_CRED"] = "|" + fields["token"]
+
+    with _AM_ADD_LOCK:
+        data = json.loads(_AM_ACCOUNTS_FILE.read_text(encoding="utf-8-sig"))
+        entries = data.setdefault(platform, [])
+        if any(e["name"].lower() == name or e.get("env_prefix") == prefix for e in entries):
+            raise _AmReject(409, "Account already exists.")
+
+        old_bytes = _AM_ENV_FILE.read_bytes()
+        old_env = _am_dotenv_values(_AM_ENV_FILE, encoding="utf-8")
+        if any(k.upper().startswith(prefix + "_") for k in [*old_env, *os.environ]):
+            raise _AmReject(409, "Old .env keys exist for this name. Choose another name.")
+        for leftover in (f"profiles/{platform}_{name}", f"sessions/{platform}_{name}.json"):
+            if os.path.lexists(BASE_DIR / leftover):
+                raise _AmReject(409, "An old profile or session exists for this name. "
+                                     "Choose another name.")
+
+        lines = []
+        for k, v in new_env.items():
+            quoted = v.replace("\\", "\\\\").replace("'", "\\'")
+            lines.append(f"{k}='{quoted}'\n")
+        sep = b"" if not old_bytes or old_bytes.endswith(b"\n") else b"\n"
+        new_bytes = old_bytes + sep + "".join(lines).encode("utf-8")
+
+        entries.append({"name": name})
+        json_bytes = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+        env_tmp = json_tmp = None
+        try:
+            env_tmp = _am_write_tmp(new_bytes)
+            # 寫入前重新解析：舊 key 必須完全不變，新 key 必須與輸入完全一致
+            if _am_dotenv_values(env_tmp, encoding="utf-8") != {**old_env, **new_env}:
+                raise _AmReject(400, "Credentials contain characters that cannot be "
+                                     "stored safely in .env.")
+            json_tmp = _am_write_tmp(json_bytes)
+            _am_backup(_AM_ENV_FILE)
+            _am_backup(_AM_ACCOUNTS_FILE)
+
+            # 先寫 credential，再讓帳號出現；第二步失敗則還原 .env
+            _am_replace(_AM_ENV_FILE, env_tmp)
+            try:
+                _am_replace(_AM_ACCOUNTS_FILE, json_tmp)
+            except BaseException:
+                _am_replace(_AM_ENV_FILE, _am_write_tmp(old_bytes))
+                raise
+        finally:
+            for tmp in (env_tmp, json_tmp):
+                if tmp and os.path.exists(tmp):
+                    os.unlink(tmp)
+
+        # .env 只在啟動時載入；補上新 key，不需重新啟動即可使用
+        os.environ.update(new_env)
+
+
+@app.post("/accounts/manage")
+def accounts_manage_add(request: _AmRequest, payload: _AmAny = _AmBody(None)):
+    try:
+        # 只接受同源的 JSON 請求，防止其他網站代為送出
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            raise _AmReject(415, "Content-Type must be application/json.")
+        origin = request.headers.get("origin")
+        if origin and _am_urlsplit(origin).hostname != request.url.hostname:
+            raise _AmReject(403, "Cross-origin request rejected.")
+
+        platform, name, fields = _am_validate_new(payload)
+        _am_add_account(platform, name, fields)
+    except _AmReject as e:
+        return _AmJSONResponse({"ok": False, "message": e.message}, status_code=e.status_code)
+    except Exception as e:
+        # 只回傳例外類型，避免訊息夾帶檔案內容
+        return _AmJSONResponse({"ok": False, "message": f"Save failed: {type(e).__name__}"},
+                               status_code=500)
+    return _AmJSONResponse({"ok": True, "platform": platform, "name": name}, status_code=201)
+
+
 ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
 <html lang="zh-Hant-TW">
 <head>
@@ -1100,7 +1262,7 @@ ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
       </div>
     </section>
 
-    <div class="am-note">🔒 Read-only mode. Credentials are hidden.</div>
+    <div class="am-note">🔒 Credentials are hidden.</div>
     <div id="notice" role="status"></div>
 
     <section class="card">
@@ -1140,7 +1302,7 @@ ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
 
 <dialog id="addDialog" class="am-dialog" aria-labelledby="addTitle">
   <h2 id="addTitle">Add Account</h2>
-  <p class="am-dialog-note">Add account will be enabled in the next step.</p>
+  <p id="addMessage" class="am-dialog-note" role="alert"></p>
 
   <label>Platform
     <select id="addPlatform">
@@ -1156,12 +1318,11 @@ ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
 
   <div class="am-dialog-actions">
     <button id="addCancel" class="ghost" type="button">Cancel</button>
-    <button id="addSave" type="button" disabled
-            title="Add account will be enabled in the next step.">Save</button>
+    <button id="addSave" type="button">Save</button>
   </div>
 </dialog>
 
-<script src="/static/accounts-manager.js?v=1"></script>
+<script src="/static/accounts-manager.js?v=2"></script>
 </body>
 </html>"""
 
