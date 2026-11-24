@@ -670,15 +670,20 @@ DASHBOARD_HTML = r"""<!doctype html>
         <span>Accounts</span>
       </a>
 
-      <div class="nav-item">
+      <a class="nav-item" href="/jobs-ui" style="text-decoration:none">
         <span class="nav-icon">⚙️</span>
         <span>Jobs</span>
-      </div>
+      </a>
 
-      <div class="nav-item">
+      <a class="nav-item" href="/logs-ui" style="text-decoration:none">
         <span class="nav-icon">🧾</span>
         <span>Logs</span>
-      </div>
+      </a>
+
+      <a class="nav-item" href="/targets" style="text-decoration:none">
+        <span class="nav-icon">🎯</span>
+        <span>Targets</span>
+      </a>
     </div>
 
     <div class="side-footer">
@@ -1218,14 +1223,19 @@ ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
         <span>Accounts</span>
       </a>
 
-      <a class="nav-item" href="/dashboard#jobs">
+      <a class="nav-item" href="/jobs-ui">
         <span class="nav-icon">⚙️</span>
         <span>Jobs</span>
       </a>
 
-      <a class="nav-item" href="/dashboard#logs">
+      <a class="nav-item" href="/logs-ui">
         <span class="nav-icon">🧾</span>
         <span>Logs</span>
+      </a>
+
+      <a class="nav-item" href="/targets">
+        <span class="nav-icon">🎯</span>
+        <span>Targets</span>
       </a>
     </div>
 
@@ -1330,3 +1340,611 @@ ACCOUNTS_MANAGER_HTML = r"""<!doctype html>
 @app.get("/accounts-manager", response_class=HTMLResponse)
 def accounts_manager():
     return ACCOUNTS_MANAGER_HTML
+
+
+# ============================================================
+# Jobs / Logs UI 區塊
+# 僅新增唯讀頁面；資料由前端呼叫既有的 GET /jobs 與 GET /jobs/{job_id}/logs 取得。
+
+JOBS_UI_HTML = r"""<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jobs</title>
+
+<link rel="stylesheet" href="/static/dashboard.css?v=1">
+<link rel="stylesheet" href="/static/accounts-manager.css?v=1">
+<link rel="stylesheet" href="/static/jobs-logs.css?v=1">
+</head>
+
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <span>Automation Dashboard</span>
+      </div>
+    </div>
+
+    <div class="nav-block">
+      <div class="nav-label">Menu</div>
+
+      <a class="nav-item" href="/dashboard">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </a>
+
+      <a class="nav-item" href="/accounts-manager">
+        <span class="nav-icon">👤</span>
+        <span>Accounts</span>
+      </a>
+
+      <a class="nav-item active" href="/jobs-ui" aria-current="page">
+        <span class="nav-icon">⚙️</span>
+        <span>Jobs</span>
+      </a>
+
+      <a class="nav-item" href="/logs-ui">
+        <span class="nav-icon">🧾</span>
+        <span>Logs</span>
+      </a>
+
+      <a class="nav-item" href="/targets">
+        <span class="nav-icon">🎯</span>
+        <span>Targets</span>
+      </a>
+    </div>
+
+    <div class="side-footer">
+      <span id="apiBadge" class="badge b-gray">API: checking...</span>
+      <span class="small">FastAPI backend monitor</span>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="mobile-brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <a href="/dashboard">← Dashboard</a>
+      </div>
+    </div>
+
+    <section class="topbar">
+      <div class="page-title">
+        <h1>Jobs</h1>
+        <p>Xem trạng thái các lần chạy automation.</p>
+      </div>
+
+      <div class="top-actions">
+        <select id="platformFilter" aria-label="Platform filter">
+          <option value="">All platforms</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+        </select>
+        <select id="statusFilter" aria-label="Status filter">
+          <option value="">All statuses</option>
+          <option value="running">Running</option>
+          <option value="success">Success</option>
+          <option value="failed">Failed</option>
+          <option value="queued">Queued</option>
+        </select>
+        <button id="refreshBtn" class="ghost" type="button">↻ Refresh</button>
+      </div>
+    </section>
+
+    <div id="notice" role="status"></div>
+
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <div class="card-title-icon">⚙️</div>
+            <div>
+              <h2>Jobs</h2>
+              <div id="jobCount" class="card-subtitle">recent jobs</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-body am-table-wrap">
+          <table class="am-table jl-table">
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Platform</th>
+                <th>Account</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="jobRows">
+              <tr><td colspan="7">Đang tải danh sách job...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+  </main>
+</div>
+
+<script src="/static/jobs-ui.js?v=1"></script>
+</body>
+</html>"""
+
+
+LOGS_UI_HTML = r"""<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logs</title>
+
+<link rel="stylesheet" href="/static/dashboard.css?v=1">
+<link rel="stylesheet" href="/static/accounts-manager.css?v=1">
+<link rel="stylesheet" href="/static/jobs-logs.css?v=1">
+</head>
+
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <span>Automation Dashboard</span>
+      </div>
+    </div>
+
+    <div class="nav-block">
+      <div class="nav-label">Menu</div>
+
+      <a class="nav-item" href="/dashboard">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </a>
+
+      <a class="nav-item" href="/accounts-manager">
+        <span class="nav-icon">👤</span>
+        <span>Accounts</span>
+      </a>
+
+      <a class="nav-item" href="/jobs-ui">
+        <span class="nav-icon">⚙️</span>
+        <span>Jobs</span>
+      </a>
+
+      <a class="nav-item active" href="/logs-ui" aria-current="page">
+        <span class="nav-icon">🧾</span>
+        <span>Logs</span>
+      </a>
+
+      <a class="nav-item" href="/targets">
+        <span class="nav-icon">🎯</span>
+        <span>Targets</span>
+      </a>
+    </div>
+
+    <div class="side-footer">
+      <span id="apiBadge" class="badge b-gray">API: checking...</span>
+      <span class="small">FastAPI backend monitor</span>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="mobile-brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <a href="/dashboard">← Dashboard</a>
+      </div>
+    </div>
+
+    <section class="topbar">
+      <div class="page-title">
+        <h1>Logs</h1>
+        <p>Kiểm tra log và lỗi của từng job.</p>
+      </div>
+
+      <div class="top-actions">
+        <select id="platformFilter" aria-label="Platform filter">
+          <option value="">All platforms</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+        </select>
+        <input id="searchInput" type="search" placeholder="Search logs..." aria-label="Search logs">
+        <button id="refreshBtn" class="ghost" type="button">↻ Refresh</button>
+      </div>
+    </section>
+
+    <div id="notice" role="status"></div>
+
+    <section class="jl-split">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <div class="card-title-icon">⚙️</div>
+            <div>
+              <h2>Log Sessions</h2>
+              <div id="sessionCount" class="card-subtitle">--</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="sessions" class="card-body jl-sessions">
+          <div class="empty">Đang tải danh sách job...</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <div class="card-title-icon">🧾</div>
+            <div>
+              <h2>Log Detail</h2>
+              <div id="selLabel" class="card-subtitle mono">No job selected</div>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button id="copyBtn" class="ghost" type="button" disabled>Copy</button>
+            <button id="downloadBtn" class="ghost" type="button" disabled>Download</button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div id="logEmpty" class="empty">Chọn một job để xem log.</div>
+          <pre id="logText" hidden></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/logs-ui.js?v=1"></script>
+</body>
+</html>"""
+
+
+@app.get("/jobs-ui", response_class=HTMLResponse)
+def jobs_ui():
+    return JOBS_UI_HTML
+
+
+@app.get("/logs-ui", response_class=HTMLResponse)
+def logs_ui():
+    return LOGS_UI_HTML
+
+
+# ============================================================
+# Targets 區塊
+# 僅管理 target_config.json（各平台共用的 hashtag / keyword 設定）。
+# 不會呼叫 automation 或 scheduler。
+
+_TG_CONFIG_FILE = BASE_DIR / "target_config.json"
+_TG_LOCK = threading.Lock()
+_TG_MAX_HASHTAG_LEN = 80
+_TG_ACTIONS = ("like", "follow", "add_friend")
+_TG_INT_RANGES = {
+    "limit_per_run": (1, 100),
+    "delay_min_seconds": (1, 3600),
+    "delay_max_seconds": (1, 3600),
+}
+
+
+def get_default_target_config():
+    return {
+        "facebook": {
+            "enabled": True,
+            "hashtags": ["duhocdailoan", "hocbongdailoan", "vieclamdailoan"],
+            "actions": {"like": True, "follow": False, "add_friend": False},
+            "limit_per_run": 10,
+            "delay_min_seconds": 20,
+            "delay_max_seconds": 60,
+        },
+        "tiktok": {
+            "enabled": True,
+            "hashtags": ["taiwanlife", "duhocdailoan", "dailoan"],
+            "actions": {"like": True, "follow": True, "add_friend": False},
+            "limit_per_run": 8,
+            "delay_min_seconds": 15,
+            "delay_max_seconds": 45,
+        },
+    }
+
+
+def validate_target_config(data):
+    # 回傳清理後的設定（只含 data 內的平台與已知欄位）；不合法時 raise ValueError。
+    if not isinstance(data, dict) or not data:
+        raise ValueError("Config must be a non-empty object.")
+
+    clean = {}
+    for platform, cfg in data.items():
+        if platform not in ("facebook", "tiktok"):
+            raise ValueError("Platform must be facebook or tiktok.")
+        if not isinstance(cfg, dict):
+            raise ValueError(f"{platform}: config must be an object.")
+        if not isinstance(cfg.get("enabled"), bool):
+            raise ValueError(f"{platform}: enabled must be a boolean.")
+
+        raw_tags = cfg.get("hashtags")
+        if not isinstance(raw_tags, list) or not all(isinstance(t, str) for t in raw_tags):
+            raise ValueError(f"{platform}: hashtags must be a list of strings.")
+        tags = [t.strip().lstrip("#").strip() for t in raw_tags]
+        tags = [t for t in tags if t]
+        if any(len(t) > _TG_MAX_HASHTAG_LEN for t in tags):
+            raise ValueError(f"{platform}: hashtag must be at most {_TG_MAX_HASHTAG_LEN} characters.")
+
+        actions = cfg.get("actions")
+        if not isinstance(actions, dict):
+            raise ValueError(f"{platform}: actions must be an object.")
+        for key in _TG_ACTIONS:
+            if not isinstance(actions.get(key), bool):
+                raise ValueError(f"{platform}: actions.{key} must be a boolean.")
+
+        for key, (low, high) in _TG_INT_RANGES.items():
+            value = cfg.get(key)
+            # type() 而非 isinstance：bool 是 int 的子類別
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(f"{platform}: {key} must be an integer from {low} to {high}.")
+        if cfg["delay_max_seconds"] < cfg["delay_min_seconds"]:
+            raise ValueError(f"{platform}: delay_max_seconds must be >= delay_min_seconds.")
+
+        clean[platform] = {
+            "enabled": cfg["enabled"],
+            "hashtags": tags,
+            "actions": {key: actions[key] for key in _TG_ACTIONS},
+            **{key: cfg[key] for key in _TG_INT_RANGES},
+        }
+    return clean
+
+
+def load_target_config():
+    # 檔案不存在 -> 預設值；檔案損壞 -> raise ValueError（不以預設值掩蓋）
+    config = get_default_target_config()
+    try:
+        text = _TG_CONFIG_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return config
+    config.update(validate_target_config(json.loads(text)))
+    return config
+
+
+def save_target_config(config):
+    data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    tmp = _TG_CONFIG_FILE.with_name(_TG_CONFIG_FILE.name + ".tmp")
+    tmp.write_bytes(data)
+    if _TG_CONFIG_FILE.exists():
+        _am_shutil.copy2(_TG_CONFIG_FILE, _TG_CONFIG_FILE.with_name(_TG_CONFIG_FILE.name + ".bak"))
+    os.replace(tmp, _TG_CONFIG_FILE)
+
+
+def _tg_error(status_code, message):
+    return _AmJSONResponse({"ok": False, "message": message}, status_code=status_code)
+
+
+@app.get("/api/targets")
+def api_get_targets():
+    try:
+        return load_target_config()
+    except (OSError, ValueError):
+        return _tg_error(500, "target_config.json is unreadable or invalid. Fix or remove the file.")
+
+
+@app.post("/api/targets")
+def api_save_targets(request: _AmRequest, payload: _AmAny = _AmBody(None)):
+    # 只接受同源的 JSON 請求（與 POST /accounts/manage 相同）
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return _tg_error(415, "Content-Type must be application/json.")
+    origin = request.headers.get("origin")
+    if origin and _am_urlsplit(origin).hostname != request.url.hostname:
+        return _tg_error(403, "Cross-origin request rejected.")
+
+    try:
+        clean = validate_target_config(payload)
+    except ValueError as e:
+        return _tg_error(400, str(e))
+
+    try:
+        with _TG_LOCK:
+            # 未送出的平台保留目前設定
+            config = {**load_target_config(), **clean}
+            save_target_config(config)
+    except Exception as e:
+        return _tg_error(500, f"Save failed: {type(e).__name__}")
+    return {"ok": True, "config": config}
+
+
+TARGETS_HTML = r"""<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Targets / Hashtags</title>
+
+<link rel="stylesheet" href="/static/dashboard.css?v=1">
+<link rel="stylesheet" href="/static/accounts-manager.css?v=1">
+<link rel="stylesheet" href="/static/targets.css?v=1">
+</head>
+
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <span>Automation Dashboard</span>
+      </div>
+    </div>
+
+    <div class="nav-block">
+      <div class="nav-label">Menu</div>
+
+      <a class="nav-item" href="/dashboard">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </a>
+
+      <a class="nav-item" href="/accounts-manager">
+        <span class="nav-icon">👤</span>
+        <span>Accounts</span>
+      </a>
+
+      <a class="nav-item" href="/jobs-ui">
+        <span class="nav-icon">⚙️</span>
+        <span>Jobs</span>
+      </a>
+
+      <a class="nav-item" href="/logs-ui">
+        <span class="nav-icon">🧾</span>
+        <span>Logs</span>
+      </a>
+
+      <a class="nav-item active" href="/targets" aria-current="page">
+        <span class="nav-icon">🎯</span>
+        <span>Targets</span>
+      </a>
+    </div>
+
+    <div class="side-footer">
+      <span id="apiBadge" class="badge b-gray">API: checking...</span>
+      <span class="small">FastAPI backend monitor</span>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="mobile-brand">
+      <div class="brand-logo">SL</div>
+      <div class="brand-title">
+        <strong>Social Runner</strong>
+        <a href="/dashboard">← Dashboard</a>
+      </div>
+    </div>
+
+    <section class="topbar">
+      <div class="page-title">
+        <h1>Targets / Hashtags</h1>
+        <p>Quản lý hashtag hoặc keyword chung cho từng nền tảng. Automation hiện tại chưa bị thay đổi.</p>
+      </div>
+
+      <div class="top-actions">
+        <button id="refreshBtn" class="ghost" type="button">↻ Refresh</button>
+      </div>
+    </section>
+
+    <div id="notice" role="status"></div>
+
+    <section class="grid tg-grid">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <div class="card-title-icon">📘</div>
+            <div>
+              <h2>Facebook Targets</h2>
+              <div id="facebook_count" class="card-subtitle">--</div>
+            </div>
+          </div>
+
+          <label class="tg-check"><input id="facebook_enabled" type="checkbox" form="facebook_form"> Enabled</label>
+        </div>
+
+        <form id="facebook_form" class="card-body">
+          <label class="tg-field">Hashtags / Keywords (mỗi dòng một mục, có hoặc không có #)
+            <textarea id="facebook_hashtags" rows="8" spellcheck="false"></textarea>
+          </label>
+
+          <fieldset class="tg-checks">
+            <legend>Actions</legend>
+            <label class="tg-check"><input id="facebook_like" type="checkbox"> Like</label>
+            <label class="tg-check"><input id="facebook_follow" type="checkbox"> Follow</label>
+            <label class="tg-check"><input id="facebook_add_friend" type="checkbox"> Add Friend</label>
+          </fieldset>
+
+          <div class="tg-numbers">
+              <label class="tg-field">Limit per run
+                <input id="facebook_limit_per_run" type="number" min="1" max="100" step="1" required>
+              </label>
+              <label class="tg-field">Delay min (seconds)
+                <input id="facebook_delay_min_seconds" type="number" min="1" max="3600" step="1" required>
+              </label>
+              <label class="tg-field">Delay max (seconds)
+                <input id="facebook_delay_max_seconds" type="number" min="1" max="3600" step="1" required>
+              </label>
+          </div>
+
+          <div class="tg-actions">
+            <button id="facebook_save" type="submit" disabled>Save</button>
+            <span id="facebook_message" role="status"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <div class="card-title-icon">🎵</div>
+            <div>
+              <h2>TikTok Targets</h2>
+              <div id="tiktok_count" class="card-subtitle">--</div>
+            </div>
+          </div>
+
+          <label class="tg-check"><input id="tiktok_enabled" type="checkbox" form="tiktok_form"> Enabled</label>
+        </div>
+
+        <form id="tiktok_form" class="card-body">
+          <label class="tg-field">Hashtags / Keywords (mỗi dòng một mục, có hoặc không có #)
+            <textarea id="tiktok_hashtags" rows="8" spellcheck="false"></textarea>
+          </label>
+
+          <fieldset class="tg-checks">
+            <legend>Actions</legend>
+            <label class="tg-check"><input id="tiktok_like" type="checkbox"> Like</label>
+            <label class="tg-check"><input id="tiktok_follow" type="checkbox"> Follow</label>
+            <label class="tg-check"><input id="tiktok_add_friend" type="checkbox"> Add Friend</label>
+          </fieldset>
+
+          <div class="tg-numbers">
+              <label class="tg-field">Limit per run
+                <input id="tiktok_limit_per_run" type="number" min="1" max="100" step="1" required>
+              </label>
+              <label class="tg-field">Delay min (seconds)
+                <input id="tiktok_delay_min_seconds" type="number" min="1" max="3600" step="1" required>
+              </label>
+              <label class="tg-field">Delay max (seconds)
+                <input id="tiktok_delay_max_seconds" type="number" min="1" max="3600" step="1" required>
+              </label>
+          </div>
+
+          <div class="tg-actions">
+            <button id="tiktok_save" type="submit" disabled>Save</button>
+            <span id="tiktok_message" role="status"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/targets.js?v=1"></script>
+</body>
+</html>"""
+
+
+@app.get("/targets", response_class=HTMLResponse)
+def targets_page():
+    return TARGETS_HTML

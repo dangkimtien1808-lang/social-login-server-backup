@@ -1,0 +1,97 @@
+/* Targets UI：僅補充 dashboard.css 與 accounts-manager.css 沒有的樣式 */
+.tg-grid .card + .card{
+  margin-top:0;
+}
+
+.tg-field{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  margin-bottom:14px;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.tg-field textarea,
+.tg-field input{
+  width:100%;
+  min-height:37px;
+  padding:8px 12px;
+  border:1px solid #eed68e;
+  border-radius:13px;
+  color:var(--text);
+  background:#ffffff;
+  font-size:14px;
+  font-weight:400;
+}
+
+.tg-field textarea{
+  resize:vertical;
+}
+
+.tg-checks{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 18px;
+  margin:0 0 14px;
+  padding:0;
+  border:0;
+}
+
+.tg-checks legend{
+  margin-bottom:5px;
+  padding:0;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.tg-check{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  font-size:14px;
+}
+
+.tg-check input{
+  width:17px;
+  height:17px;
+  accent-color:var(--accent);
+}
+
+.tg-numbers{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+}
+
+.tg-numbers .tg-field{
+  justify-content:flex-end;
+}
+
+.tg-actions{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.tg-actions [role="status"]{
+  font-size:13px;
+  font-weight:700;
+}
+
+.tg-actions .ok{
+  color:var(--green);
+}
+
+.tg-actions .err{
+  color:var(--red);
+}
+
+@media(max-width:560px){
+  .tg-numbers{
+    grid-template-columns:1fr;
+    gap:0;
+  }
+}

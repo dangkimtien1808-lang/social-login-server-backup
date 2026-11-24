@@ -1,0 +1,71 @@
+/* Jobs / Logs UI：僅補充 dashboard.css 與 accounts-manager.css 沒有的樣式 */
+.jl-table{
+  min-width:900px;
+}
+
+.top-actions input[type="search"]{
+  min-height:37px;
+  padding:8px 12px;
+  border:1px solid #eed68e;
+  border-radius:13px;
+  color:var(--text);
+  background:#ffffff;
+}
+
+.jl-link{
+  display:inline-flex;
+  padding:6px 12px;
+  border:1px solid #eed68e;
+  border-radius:13px;
+  color:#5d4300;
+  background:#ffffff;
+  font-size:12px;
+  font-weight:850;
+  text-decoration:none;
+  white-space:nowrap;
+}
+
+.jl-link:hover{
+  background:#fff8df;
+  border-color:#e4bd3a;
+}
+
+.jl-split{
+  display:grid;
+  grid-template-columns:minmax(260px,340px) minmax(0,1fr);
+  gap:18px;
+  align-items:start;
+}
+
+.jl-split .card + .card{
+  margin-top:0;
+}
+
+.jl-sessions{
+  max-height:620px;
+  overflow-y:auto;
+}
+
+.jl-sessions button.row{
+  width:100%;
+  justify-content:flex-start;
+  color:var(--text);
+  font-weight:400;
+  text-align:left;
+  box-shadow:none;
+}
+
+.jl-sessions button.row.selected{
+  border-color:#d99a00;
+  background:#fff4d1;
+}
+
+.jl-sessions .badge{
+  margin-left:auto;
+}
+
+@media(max-width:900px){
+  .jl-split{
+    grid-template-columns:minmax(0,1fr);
+  }
+}

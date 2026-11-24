@@ -19,3 +19,5 @@ diagnostics/
 *.webp
 *.bak
 *.log
+target_config.json
+target_config.json.bak
